@@ -17,23 +17,29 @@ from reportlab.lib.units import cm
 from reportlab.lib.utils import ImageReader
 from reportlab.pdfgen import canvas
 
+# Optional chart libs (won't crash if missing)
+try:
+    import altair as alt
+except Exception:
+    alt = None
+
 # -----------------------------
 # CONFIG
 # -----------------------------
 st.set_page_config(page_title="DFU-VA | Payslip Analysis", layout="wide")
 
-# Login (requested)
+# Login
 APP_USERNAME = "admin"
 APP_PASSWORD = "Dfu-va@admin"
 
-# Default Google Sheets (your links)
+# Default Google Sheets
 DEFAULT_LEADS_URL = "https://docs.google.com/spreadsheets/d/1KLWWiqYsOv0O7DVxfS0XOoFoe8xr-4NT-ZQYSKGz2bk/edit?usp=sharing"
 DEFAULT_HOURS_URL = "https://docs.google.com/spreadsheets/d/1MTYPVo02kTc2fLsBpkt1ZAXBjLjAnOUIPn05aEigIiU/edit?usp=sharing"
 
 # Branding
 DFU_RED = "#E30613"
 BG_APP = "#FAFAFB"
-BG_LOGIN = "#FDECEF"   # pinkish (for logo visibility)
+BG_LOGIN = "#FDECEF"   # pinkish
 TEXT = "#111827"
 MUTED = "#6B7280"
 BORDER = "rgba(17,24,39,0.08)"
@@ -56,11 +62,6 @@ def format_num(x, decimals=2):
         return str(x)
 
 def parse_duration_to_hours(val) -> float:
-    """
-    Converts strings like:
-      "42 hours 35 min.", "9 min. 44 s.", "34 s.", "1 hour 2 min."
-    into hours (float).
-    """
     if pd.isna(val):
         return 0.0
     s = str(val).strip().lower()
@@ -93,10 +94,6 @@ def extract_google_sheet_id(url: str) -> Optional[str]:
     return m.group(1) if m else None
 
 def download_google_sheet_xlsx(sheet_url: str) -> bytes:
-    """
-    Downloads a public Google Sheet as XLSX bytes.
-    The sheet must be shared/accessible.
-    """
     sheet_id = extract_google_sheet_id(sheet_url)
     if not sheet_id:
         raise ValueError("Invalid Google Sheets URL.")
@@ -171,7 +168,7 @@ def build_pdf_report(
 
     def draw_bg(canv: canvas.Canvas, _doc):
         canv.saveState()
-        canv.setFillColor(colors.HexColor("#FDECEF"))  # light pink background
+        canv.setFillColor(colors.HexColor("#FDECEF"))
         w, h = A4
         canv.rect(0, 0, w, h, fill=1, stroke=0)
         canv.restoreState()
@@ -201,7 +198,7 @@ def build_pdf_report(
             f"Date Range: <b>{start_date}</b> → <b>{end_date}</b><br/>"
             f"Agent ID: <b>{agent_id or '-'}</b> &nbsp;&nbsp;|&nbsp;&nbsp; "
             f"Login ID: <b>{login_id or '-'}</b> &nbsp;&nbsp;|&nbsp;&nbsp; "
-            f"Cutoff: <b>{cutoff_hour}:00</b> (before cutoff counts as previous day)",
+            f"Cutoff: <b>{cutoff_hour}:00</b>",
             subtitle
         )
     ]
@@ -289,7 +286,7 @@ def load_data_from_google_sheets(
     if "Name" not in pay.columns or "Day/date" not in pay.columns:
         raise ValueError("Hours sheet must contain columns: Name, Day/date")
 
-    required_leads_cols = ["Timestamp", "Agent Name", "Lead Result", "Lead Status"]
+    required_leads_cols = ["Timestamp", "Agent Name", "Lead Result"]
     missing = [c for c in required_leads_cols if c not in leads.columns]
     if missing:
         raise ValueError(f"Leads sheet is missing: {', '.join(missing)}")
@@ -301,7 +298,15 @@ def load_data_from_google_sheets(
     leads2 = leads.copy()
     leads2["Timestamp"] = pd.to_datetime(leads2["Timestamp"], errors="coerce")
     leads2 = leads2[leads2["Timestamp"].notna()].copy()
+
+    # Cairo cutoff rule: before cutoff counts as previous day
     leads2["work_date"] = (leads2["Timestamp"] - pd.Timedelta(hours=int(cutoff_hour))).dt.date
+
+    pay_daily["Name"] = pay_daily["Name"].astype(str).str.strip()
+    leads2["Agent Name"] = leads2["Agent Name"].astype(str).str.strip()
+
+    if "Case" in leads2.columns:
+        leads2["Case"] = leads2["Case"].astype(str)
 
     return pay_daily, leads2, pay, leads
 
@@ -325,7 +330,6 @@ except Exception:
 def apply_css(is_login: bool):
     bg = BG_LOGIN if is_login else BG_APP
 
-    # For login: center everything on screen (no blank scroll)
     login_block = """
     .block-container{
       max-width: 1100px !important;
@@ -356,12 +360,10 @@ def apply_css(is_login: bool):
 
       {login_block}
 
-      /* Inputs look */
       div[data-baseweb="input"] > div, div[data-baseweb="select"] > div {{
         border-radius: 14px !important;
       }}
 
-      /* Buttons */
       .stButton button, .stDownloadButton button {{
         border-radius: 14px !important;
         padding: 0.70rem 1.0rem !important;
@@ -377,7 +379,6 @@ def apply_css(is_login: bool):
         filter: brightness(0.96);
       }}
 
-      /* Cards */
       .card {{
         background: {CARD_BG};
         border: 1px solid {BORDER};
@@ -392,7 +393,6 @@ def apply_css(is_login: bool):
         margin: 0 0 10px 0;
       }}
 
-      /* Top bar */
       .topbar {{
         background: linear-gradient(90deg, rgba(227,6,19,0.10), rgba(227,6,19,0.03));
         border: 1px solid {BORDER};
@@ -420,16 +420,14 @@ def apply_css(is_login: bool):
         font-size: 12px;
       }}
 
-      /* LOGIN: style the form as a real card */
-     div[data-testid="stForm"] {{
-  width: min(980px, 96vw);
-  background: linear-gradient(180deg, rgba(255,230,234,0.95) 0%, rgba(255,243,245,0.95) 100%);
-  border: 1px solid rgba(227,6,19,0.18);
-  border-radius: 26px;
-  padding: 22px 22px;
-  box-shadow: 0 18px 48px rgba(0,0,0,0.08);
-}}
-
+      div[data-testid="stForm"] {{
+        width: min(980px, 96vw);
+        background: linear-gradient(180deg, rgba(255,230,234,0.95) 0%, rgba(255,243,245,0.95) 100%);
+        border: 1px solid rgba(227,6,19,0.18);
+        border-radius: 26px;
+        padding: 22px 22px;
+        box-shadow: 0 18px 48px rgba(0,0,0,0.08);
+      }}
 
       .login-head {{
         display:flex;
@@ -471,7 +469,6 @@ def login_screen():
         if LOGO_B64 else ""
     )
 
-    # Everything inside ONE form => one centered card => no blank page / no scrolling to find inputs
     with st.form("login_form", clear_on_submit=False):
         st.markdown(f"""
         <div class="login-head">
@@ -533,7 +530,6 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# Controls row
 ctrl_l, ctrl_r = st.columns([1, 1])
 with ctrl_l:
     if st.button("Refresh data"):
@@ -543,7 +539,6 @@ with ctrl_r:
         st.session_state.authed = False
         st.rerun()
 
-# Sidebar settings
 with st.sidebar:
     st.markdown("### Data Sources")
     leads_url = st.text_input("Leads Bank (Google Sheets URL)", value=DEFAULT_LEADS_URL)
@@ -602,7 +597,7 @@ if start_date > end_date:
     st.error("Start date must be before end date.")
     st.stop()
 
-lead_agents = sorted(leads2["Agent Name"].dropna().astype(str).unique().tolist())
+lead_agents = sorted(leads2["Agent Name"].dropna().astype(str).str.strip().unique().tolist())
 if not lead_agents:
     st.error("No agent names found in Leads Bank.")
     st.stop()
@@ -610,17 +605,18 @@ if not lead_agents:
 first2 = " ".join(str(agent_name).split()[:2]).strip().lower()
 auto_matches = [a for a in lead_agents if safe_lower(a).startswith(first2)]
 default_lead_agent = auto_matches[0] if auto_matches else lead_agents[0]
-
 lead_agent_choice = st.selectbox("Leads Agent Name", options=lead_agents, index=lead_agents.index(default_lead_agent))
 
-# Filter payslip rows
+# Filter payslip rows (defines working days => excludes days off)
 pay_f = pay_daily[
     (pay_daily["Name"].astype(str).str.strip() == str(agent_name).strip())
     & (pay_daily["work_date"] >= start_date)
     & (pay_daily["work_date"] <= end_date)
 ].copy()
 
-working_days = int(pay_f["work_date"].nunique()) if len(pay_f) else 0
+workdays = sorted(pay_f["work_date"].unique().tolist()) if len(pay_f) else []
+working_days = int(len(workdays))
+
 logged_hours = float(pay_f["Logged Time"].apply(parse_duration_to_hours).sum()) if "Logged Time" in pay_f.columns else 0.0
 payable_hours = float(pay_f["Payable (t)"].apply(parse_duration_to_hours).sum()) if "Payable (t)" in pay_f.columns else logged_hours
 unpayable_hours = float(pay_f["Unpayable (t)"].apply(parse_duration_to_hours).sum()) if "Unpayable (t)" in pay_f.columns else 0.0
@@ -628,23 +624,28 @@ unpayable_hours = float(pay_f["Unpayable (t)"].apply(parse_duration_to_hours).su
 agent_id = str(pay_f["User ID"].dropna().iloc[0]) if "User ID" in pay_f.columns and len(pay_f["User ID"].dropna()) else ""
 login_id = str(pay_f["Login ID"].dropna().iloc[0]) if "Login ID" in pay_f.columns and len(pay_f["Login ID"].dropna()) else ""
 
-# Filter leads rows
-leads_f = leads2[
-    (leads2["Agent Name"].astype(str) == str(lead_agent_choice))
+# Filter leads rows for agent & range (LEADS BANK ONLY)
+leads_chart = leads2[
+    (leads2["Agent Name"].astype(str).str.strip() == str(lead_agent_choice).strip())
     & (leads2["work_date"] >= start_date)
     & (leads2["work_date"] <= end_date)
 ].copy()
 
+leads_f = leads_chart.copy()
+
 qualified_leads = int((leads_f["Lead Result"].apply(safe_lower) == "qualified").sum())
 disqualified_leads = int((leads_f["Lead Result"].apply(safe_lower) == "disqualified").sum())
 callbacks = int((leads_f["Lead Result"].apply(safe_lower) == "call back").sum())
-above_market = int((leads_f["Case"].apply(safe_lower) == "above market value").sum()) if "Case" in leads_f.columns else 0
 
-payable_leads = int((
-    (leads_f["Lead Result"].apply(safe_lower) == "qualified")
-    & (leads_f["Lead Status"].apply(safe_lower) == "pushed to client")
-).sum())
+if "Case" in leads_f.columns:
+    above_market = int((leads_f["Case"].apply(safe_lower) == "above market value").sum())
+else:
+    above_market = 0
 
+# Payable leads (still used in KPIs/summary)
+payable_leads = max(0, int(qualified_leads - above_market))
+
+# Targets (based on payable leads)
 leads_target = working_days * int(leads_target_per_day)
 target_met = (payable_leads >= leads_target) if working_days > 0 else False
 
@@ -657,7 +658,7 @@ lead_summary = pd.DataFrame({
         "Disqualified Leads",
         "Call Backs",
         "Above Market Value",
-        "Payable Leads"
+        "Payable Leads (Qualified - Above Market)"
     ],
     "Value": [qualified_leads, disqualified_leads, callbacks, above_market, payable_leads]
 })
@@ -689,6 +690,70 @@ k2.metric("Payable Leads", payable_leads)
 k3.metric("Lead Target", leads_target)
 k4.metric("Target Met", "YES" if target_met else "NO")
 
+# -----------------------------
+# Daily QUALIFIED leads graph (EXCLUDING DAYS OFF using Hours sheet)
+# -----------------------------
+st.markdown('<div class="card"><p class="card-title">Daily Qualified Leads</p>', unsafe_allow_html=True)
+
+daily_table = leads_chart.groupby("work_date", as_index=False).agg(
+    Qualified=("Lead Result", lambda s: (s.apply(safe_lower) == "qualified").sum()),
+)
+
+# Reindex to working days only (exclude days off)
+if workdays:
+    idx = pd.DataFrame({"work_date": workdays})
+    daily_table = idx.merge(daily_table, on="work_date", how="left").fillna(0)
+    daily_table["Qualified"] = daily_table["Qualified"].astype(int)
+
+daily_table = daily_table.sort_values("work_date")
+daily_table["Date"] = daily_table["work_date"].astype(str)
+daily_table["Met Target"] = daily_table["Qualified"] >= int(leads_target_per_day)
+
+if daily_table.empty or (workdays and len(workdays) == 0):
+    st.info("No working-day data in the selected range (Hours sheet).")
+else:
+    chart_df = daily_table.copy()
+    chart_df["work_date"] = pd.to_datetime(chart_df["work_date"])
+
+    if alt is not None:
+        bars = alt.Chart(chart_df).mark_bar(cornerRadiusTopLeft=6, cornerRadiusTopRight=6).encode(
+            x=alt.X("work_date:T", title="Date", axis=alt.Axis(format="%b %d", labelAngle=0)),
+            y=alt.Y("Qualified:Q", title="Qualified Leads"),
+            color=alt.Color(
+                "Met Target:N",
+                scale=alt.Scale(domain=[False, True], range=["#F59E0B", DFU_RED]),
+                legend=alt.Legend(title="Target (2/day)")
+            ),
+            tooltip=[
+                alt.Tooltip("work_date:T", title="Date", format="%Y-%m-%d"),
+                alt.Tooltip("Qualified:Q", title="Qualified"),
+            ],
+        )
+
+        line = alt.Chart(chart_df).mark_line(color=TEXT, strokeWidth=3).encode(
+            x="work_date:T",
+            y="Qualified:Q",
+        )
+
+        points = alt.Chart(chart_df).mark_point(color=TEXT, filled=True, size=70).encode(
+            x="work_date:T",
+            y="Qualified:Q",
+        )
+
+        rule = alt.Chart(pd.DataFrame({"y": [int(leads_target_per_day)]})).mark_rule(
+            color="#111827", strokeDash=[6, 6], strokeWidth=2, opacity=0.7
+        ).encode(y="y:Q")
+
+        c = (bars + line + points + rule).properties(height=320).interactive()
+        st.altair_chart(c, use_container_width=True)
+    else:
+        st.bar_chart(chart_df.set_index("work_date")["Qualified"], height=320)
+
+    st.dataframe(daily_table[["Date", "Qualified"]], use_container_width=True, hide_index=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
+
+# Summaries
 grid = st.columns(2)
 with grid[0]:
     st.markdown('<div class="card"><p class="card-title">Lead Summary</p>', unsafe_allow_html=True)
